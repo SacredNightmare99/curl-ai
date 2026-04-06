@@ -85,7 +85,7 @@ Windows (curl.exe - PowerShell / cmd)
 
 1) Prompt only
 --------------------------------
-curl.exe -X POST ${PUBLIC_URL}/chat -H "Content-Type: application/json" -d "{\"prompt\":\"Explain recursion\"}"
+curl.exe -X POST ${PUBLIC_URL}/chat -H "Content-Type: application/json" -d "{\\"prompt\\":\\"Explain recursion\\"}"
 
 2) File only
 --------------------------------
