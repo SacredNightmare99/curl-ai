@@ -59,6 +59,64 @@ app.get("/", (req, res) => {
 
   const PUBLIC_URL = process.env.PUBLIC_URL || "http://localhost:7000";
 
+  const PROXY_HOST = process.env.PROXY_HOST;
+  const PROXY_PORT = process.env.PROXY_PORT;
+  const PROXY_USER = process.env.PROXY_USER;
+  const PROXY_PASS = process.env.PROXY_PASS;
+
+  const hasProxy =
+    PROXY_HOST && PROXY_PORT && PROXY_USER && PROXY_PASS;
+
+  const PROXY_INLINE = hasProxy
+    ? `${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}`
+    : "";
+
+  const PROXY_HOSTPORT = hasProxy
+    ? `${PROXY_HOST}:${PROXY_PORT}`
+    : "";
+
+  const proxySection = hasProxy
+    ? `
+---- With Forward Proxy ----
+
+A) Inline credentials (quick)
+--------------------------------
+curl -x http://${PROXY_INLINE} \\
+  -X POST ${PUBLIC_URL}/chat \\
+  -H "Content-Type: application/json" \\
+  -d '{"prompt":"Explain recursion"}'
+
+B) Using --proxy-user (recommended)
+--------------------------------
+curl -x http://${PROXY_HOSTPORT} \\
+  --proxy-user ${PROXY_USER}:${PROXY_PASS} \\
+  -X POST ${PUBLIC_URL}/chat \\
+  -H "Content-Type: application/json" \\
+  -d '{"prompt":"Explain recursion"}'
+`
+    : "";
+
+  const proxySectionWindows = hasProxy
+    ? `
+---- With Forward Proxy ----
+
+A) Inline credentials (quick)
+--------------------------------
+curl.exe -x http://${PROXY_INLINE} ^
+  -X POST ${PUBLIC_URL}/chat ^
+  -H "Content-Type: application/json" ^
+  -d "{\\"prompt\\":\\"Explain recursion\\"}"
+
+B) Using --proxy-user (recommended)
+--------------------------------
+curl.exe -x http://${PROXY_HOSTPORT} ^
+  --proxy-user ${PROXY_USER}:${PROXY_PASS} ^
+  -X POST ${PUBLIC_URL}/chat ^
+  -H "Content-Type: application/json" ^
+  -d "{\\"prompt\\":\\"Explain recursion\\"}"
+`
+    : "";
+
   res.send(`
 OpenRouter Proxy (Plain Text)
 
@@ -78,6 +136,7 @@ curl -X POST ${PUBLIC_URL}/chat -F "file=@notes.txt"
 --------------------------------
 curl -X POST ${PUBLIC_URL}/chat -F "file=@notes.pdf" -F "prompt=Summarize this in bullet points"
 
+${proxySection}
 
 ======================
 Windows (curl.exe - PowerShell / cmd)
@@ -95,6 +154,7 @@ curl.exe -X POST ${PUBLIC_URL}/chat -F "file=@notes.txt"
 --------------------------------
 curl.exe -X POST ${PUBLIC_URL}/chat -F "file=@notes.pdf" -F "prompt=Summarize this in bullet points"
 
+${proxySectionWindows}
 
 Notes:
 - Supports: .txt, .md, .json, .pdf, .docx
