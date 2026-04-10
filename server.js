@@ -5,6 +5,7 @@ import fs from "fs";
 import mammoth from "mammoth";
 import { OpenRouter } from "@openrouter/sdk";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const app = express();
 app.use(express.json());
@@ -15,11 +16,14 @@ const openRouter = new OpenRouter({
   apiKey: process.env.API_KEY,
 });
 
+const gemini = process.env.GEMINI_API_KEY
+  ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+  : null;
+
 const PUBLIC_URL = process.env.PUBLIC_URL || "http://localhost:3000";
 
 const MODELS = [
   "meta-llama/llama-3.2-3b-instruct:free",
-  "stepfun/step-3.5-flash:free",
   "google/gemma-3-27b-it:free",
   "nvidia/nemotron-3-nano-30b-a3b:free",
   "liquid/lfm-2.5-1.2b-thinking:free",
@@ -34,7 +38,7 @@ const MODELS = [
   "openrouter/free"
 ];
 
-// -------- PDF TEXT EXTRACTION (ESM-safe) --------
+// -------- PDF TEXT EXTRACTION --------
 async function extractPdfText(buffer) {
   const uint8Array = new Uint8Array(buffer);
   const loadingTask = pdfjsLib.getDocument({ data: uint8Array });
@@ -45,7 +49,6 @@ async function extractPdfText(buffer) {
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-
     const strings = content.items.map((item) => item.str);
     text += strings.join(" ") + "\n";
   }
@@ -67,54 +70,12 @@ app.get("/", (req, res) => {
   const hasProxy =
     PROXY_HOST && PROXY_PORT && PROXY_USER && PROXY_PASS;
 
-  const PROXY_INLINE = hasProxy
-    ? `${PROXY_USER}:${PROXY_PASS}@${PROXY_HOST}:${PROXY_PORT}`
+  const proxyLinux = hasProxy
+    ? `-x http://${PROXY_HOST}:${PROXY_PORT} --proxy-user ${PROXY_USER}:${PROXY_PASS}`
     : "";
 
-  const PROXY_HOSTPORT = hasProxy
-    ? `${PROXY_HOST}:${PROXY_PORT}`
-    : "";
-
-  const proxySection = hasProxy
-    ? `
----- With Forward Proxy ----
-
-A) Inline credentials (quick)
---------------------------------
-curl -x http://${PROXY_INLINE} \\
-  -X POST ${PUBLIC_URL}/chat \\
-  -H "Content-Type: application/json" \\
-  -d '{"prompt":"Explain recursion"}'
-
-B) Using --proxy-user (recommended)
---------------------------------
-curl -x http://${PROXY_HOSTPORT} \\
-  --proxy-user ${PROXY_USER}:${PROXY_PASS} \\
-  -X POST ${PUBLIC_URL}/chat \\
-  -H "Content-Type: application/json" \\
-  -d '{"prompt":"Explain recursion"}'
-`
-    : "";
-
-  const proxySectionWindows = hasProxy
-    ? `
----- With Forward Proxy ----
-
-A) Inline credentials (quick)
---------------------------------
-curl.exe -x http://${PROXY_INLINE} ^
-  -X POST ${PUBLIC_URL}/chat ^
-  -H "Content-Type: application/json" ^
-  -d "{\\"prompt\\":\\"Explain recursion\\"}"
-
-B) Using --proxy-user (recommended)
---------------------------------
-curl.exe -x http://${PROXY_HOSTPORT} ^
-  --proxy-user ${PROXY_USER}:${PROXY_PASS} ^
-  -X POST ${PUBLIC_URL}/chat ^
-  -H "Content-Type: application/json" ^
-  -d "{\\"prompt\\":\\"Explain recursion\\"}"
-`
+  const proxyWin = hasProxy
+    ? `-x http://${PROXY_HOST}:${PROXY_PORT} --proxy-user ${PROXY_USER}:${PROXY_PASS}`
     : "";
 
   res.send(`
@@ -126,17 +87,21 @@ Linux / macOS
 
 1) Prompt only
 --------------------------------
-curl -X POST ${PUBLIC_URL}/chat -H "Content-Type: application/json" -d '{"prompt":"Explain recursion"}'
+curl ${proxyLinux} -X POST ${PUBLIC_URL}/chat \\
+  -H "Content-Type: application/json" \\
+  -d '{"prompt":"Explain recursion"}'
 
 2) File only
 --------------------------------
-curl -X POST ${PUBLIC_URL}/chat -F "file=@notes.txt"
+curl ${proxyLinux} -X POST ${PUBLIC_URL}/chat \\
+  -F "file=@notes.txt"
 
 3) File + instruction
 --------------------------------
-curl -X POST ${PUBLIC_URL}/chat -F "file=@notes.pdf" -F "prompt=Summarize this in bullet points"
+curl ${proxyLinux} -X POST ${PUBLIC_URL}/chat \\
+  -F "file=@notes.pdf" \\
+  -F "prompt=Summarize this in bullet points"
 
-${proxySection}
 
 ======================
 Windows (curl.exe - PowerShell / cmd)
@@ -144,17 +109,21 @@ Windows (curl.exe - PowerShell / cmd)
 
 1) Prompt only
 --------------------------------
-curl.exe -X POST ${PUBLIC_URL}/chat -H "Content-Type: application/json" -d "{\\"prompt\\":\\"Explain recursion\\"}"
+curl.exe ${proxyWin} -X POST ${PUBLIC_URL}/chat ^
+  -H "Content-Type: application/json" ^
+  -d "{\\"prompt\\":\\"Explain recursion\\"}"
 
 2) File only
 --------------------------------
-curl.exe -X POST ${PUBLIC_URL}/chat -F "file=@notes.txt"
+curl.exe ${proxyWin} -X POST ${PUBLIC_URL}/chat ^
+  -F "file=@notes.txt"
 
 3) File + instruction
 --------------------------------
-curl.exe -X POST ${PUBLIC_URL}/chat -F "file=@notes.pdf" -F "prompt=Summarize this in bullet points"
+curl.exe ${proxyWin} -X POST ${PUBLIC_URL}/chat ^
+  -F "file=@notes.pdf" ^
+  -F "prompt=Summarize this in bullet points"
 
-${proxySectionWindows}
 
 Notes:
 - Supports: .txt, .md, .json, .pdf, .docx
@@ -169,20 +138,17 @@ app.post("/chat", upload.single("file"), async (req, res) => {
     let userPrompt = req.body.prompt || "";
     let fileContent = "";
 
-    // ---- FILE HANDLING ----
     if (req.file) {
       const buffer = fs.readFileSync(req.file.path);
 
       if (req.file.mimetype === "application/pdf") {
         fileContent = await extractPdfText(buffer);
-
       } else if (
         req.file.mimetype ===
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
       ) {
         const result = await mammoth.extractRawText({ buffer });
         fileContent = result.value;
-
       } else {
         fileContent = buffer.toString("utf-8");
       }
@@ -190,21 +156,12 @@ app.post("/chat", upload.single("file"), async (req, res) => {
       fs.unlinkSync(req.file.path);
     }
 
-    // ---- COMBINE PROMPT ----
     let prompt = "";
 
     if (fileContent && userPrompt) {
-      prompt = `
-INSTRUCTION:
-${userPrompt}
-
-CONTENT:
-${fileContent}
-`.trim();
-
+      prompt = `INSTRUCTION:\n${userPrompt}\n\nCONTENT:\n${fileContent}`;
     } else if (fileContent) {
       prompt = fileContent;
-
     } else {
       prompt = userPrompt;
     }
@@ -213,44 +170,66 @@ ${fileContent}
       return res.status(400).send("Missing prompt or file");
     }
 
-    // ---- LIMIT SIZE (important for free models) ----
-    prompt = prompt.slice(0, 12000);
+    prompt = prompt.slice(0, 20000);
 
     const messages = [{ role: "user", content: prompt }];
 
     let lastError = null;
 
-    // ---- MODEL FALLBACK LOOP ----
-    for (const model of MODELS) {
-      try {
-        const completion = await openRouter.chat.send({
-          chatGenerationParams: {
-            model,
-            messages,
-          },
-        });
+    // ---- OPENROUTER ----
+    if (process.env.API_KEY) {
+      for (const model of MODELS) {
+        try {
+          const completion = await openRouter.chat.send({
+            chatGenerationParams: { model, messages },
+          });
 
-        const content =
-          completion.choices?.[0]?.message?.content ?? "";
+          const content =
+            completion.choices?.[0]?.message?.content ?? "";
 
-        res.setHeader("Content-Type", "text/plain");
-        return res.send(content);
+          if (content) {
+            res.setHeader("Content-Type", "text/plain");
+            return res.send(content);
+          }
 
-      } catch (err) {
-        lastError = err;
+        } catch (err) {
+          console.error("OpenRouter error:", err);
+          lastError = err;
 
-        if (err.statusCode !== 429) break;
+          const status = err.statusCode || err.status;
+          if (status === 404) continue;
+          if (status !== 429) break;
 
-        await new Promise((r) => setTimeout(r, 800));
+          await new Promise((r) => setTimeout(r, 800));
+        }
       }
     }
 
-    return res
-      .status(500)
-      .send("All free models failed. Try again.");
+    // ---- GEMINI ----
+    if (gemini) {
+      try {
+        const model = gemini.getGenerativeModel({
+          model: "gemini-3-flash-preview",
+        });
+
+        const result = await model.generateContent(prompt);
+        const text = result.response.text();
+
+        if (text) {
+          res.setHeader("Content-Type", "text/plain");
+          return res.send(text);
+        }
+
+      } catch (err) {
+        console.error("Gemini error:", err);
+        lastError = err;
+      }
+    }
+
+    return res.status(500).send("All providers failed. Try again.");
 
   } catch (err) {
-    console.error(err);
+    console.error("Internal error:", err);
     res.status(500).send("Internal server error");
   }
 });
